@@ -1,0 +1,14 @@
+{
+  "name": "@claw/protocols",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./kumbaya": "./src/kumbaya/index.ts"
+  },
+  "dependencies": {
+    "@claw/core": "workspace:*",
+    "viem": "^2.21.0"
+  }
+}

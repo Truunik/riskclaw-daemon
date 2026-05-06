@@ -1,0 +1,21 @@
+{
+  "name": "riskclaw-daemon",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "skills/*"
+  ],
+  "scripts": {
+    "skills": "bun run apps/cli/src/index.ts skills",
+    "claw": "bun run apps/cli/src/index.ts",
+    "daemon": "bun run apps/daemon/src/index.ts",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^22.7.5"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@claw/skill-0g-uniswap-hook",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@claw/core": "workspace:*"
+  }
+}

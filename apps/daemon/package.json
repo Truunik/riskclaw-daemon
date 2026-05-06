@@ -1,0 +1,17 @@
+{
+  "name": "@claw/daemon",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@claw/core": "workspace:*",
+    "@claw/adapters": "workspace:*",
+    "@claw/skill-0g-uniswap-hook": "workspace:*",
+    "@claw/skill-mega-vault-exiter": "workspace:*",
+    "@claw/skill-mega-preflight": "workspace:*",
+    "@claw/skill-mega-aggregator": "workspace:*"
+  }
+}
