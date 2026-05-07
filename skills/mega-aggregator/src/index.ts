@@ -1,7 +1,7 @@
 import type { Skill, SkillContext } from '@claw/core';
-import { KumbayaDecoder, type PoolRisk, type SwapDecoder } from '@claw/protocols';
+import { KumbayaDecoder, PrismDecoder, type PoolRisk, type SwapDecoder } from '@claw/protocols';
 
-const DECODERS: SwapDecoder[] = [KumbayaDecoder];
+const DECODERS: SwapDecoder[] = [KumbayaDecoder, PrismDecoder];
 
 interface PoolHop {
   address: string;
@@ -34,7 +34,7 @@ async function scoreHop(hop: PoolHop, chainId: number, ctx: SkillContext): Promi
       poolAddress: hop.address,
       riskBps: 5000,
       reasons: [`no decoder registered for protocol '${hop.protocol}' — treating as unknown`],
-      components: { tvlDriftBps: null, spreadBps: null, inactiveLiquidity: null, oracleHealthBps: null },
+      components: { tvlDriftBps: null, tvlDriftMediumBps: null, spreadBps: null, inactiveLiquidity: null, oracleHealthBps: null, tokenPatternBps: null, dePegDeviationBps: null },
     };
   }
   if (!decoder.supports(chainId)) {
@@ -43,28 +43,28 @@ async function scoreHop(hop: PoolHop, chainId: number, ctx: SkillContext): Promi
       poolAddress: hop.address,
       riskBps: 5000,
       reasons: [`decoder '${decoder.name}' not deployed on chainId ${chainId}`],
-      components: { tvlDriftBps: null, spreadBps: null, inactiveLiquidity: null, oracleHealthBps: null },
+      components: { tvlDriftBps: null, tvlDriftMediumBps: null, spreadBps: null, inactiveLiquidity: null, oracleHealthBps: null, tokenPatternBps: null, dePegDeviationBps: null },
     };
   }
   return decoder.scorePool(hop.address, chainId, ctx);
 }
 
 async function score(req: ScoreRequest, ctx: SkillContext): Promise<ScoreResponse> {
-  const chainId = Number(ctx.env.MEGAETH_CHAIN_ID ?? 6343);
+  const chainId = Number(ctx.env.MEGAETH_CHAIN_ID ?? 4326);
   ctx.logger.info('aggregator.score', { hops: req.hops.length, chainId });
 
   const perPool = await Promise.all(req.hops.map(h => scoreHop(h, chainId, ctx)));
   const routeRiskBps = perPool.reduce((acc, p) => Math.max(acc, p.riskBps), 0);
   const recommendation = routeRiskBps >= 8500 ? 'BLOCK' : routeRiskBps >= 5000 ? 'WARN' : 'ALLOW';
 
-  return { routeRiskBps, recommendation, perPool, version: 'v0.2-kumbaya' };
+  return { routeRiskBps, recommendation, perPool, version: 'v0.3-kumbaya+prism' };
 }
 
 const skill: Skill = {
   manifest: {
     name: 'mega-aggregator',
-    description: 'Aggregator sidecar — scores DEX routes by live pool risk (TVL drift, oracle health, liquidity). Decoders: kumbaya',
-    chain: { id: 6343, name: 'MegaETH-testnet', rpc: 'https://carrot.megaeth.com/rpc' },
+    description: 'Aggregator sidecar — scores DEX routes by live pool risk (TVL drift, oracle health, liquidity). Decoders: kumbaya, prism',
+    chain: { id: 4326, name: 'MegaETH-mainnet', rpc: 'https://mainnet.megaeth.com/rpc' },
     adapters: { signer: 'env', chain: 'evm-realtime' },
     streaming: false,
     handlers: ['score'],

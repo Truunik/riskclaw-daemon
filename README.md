@@ -63,6 +63,27 @@ MEGAETH_CHAIN_ID=6343 bun run claw preflight kumbaya \
   0x1EE2f89CD8a025D3262eC8C7e817AAB42Bc61a75 1e18 0
 ```
 
+Run a full protocol audit (factory governance, every pool scored, scam-token detection, severity-tagged findings):
+
+```bash
+bun run claw audit prism      # or: kumbaya
+JSON=1 bun run claw audit prism > prism-audit.json
+```
+
+Start the local web UI + JSON API (preflight widget, route-score widget, audit endpoint):
+
+```bash
+bun run apps/web/src/server.ts   # → http://localhost:4242
+```
+
+API endpoints (all rate-limited to 30 req/min/IP):
+
+- `POST /api/preflight` — convenience: `{ protocol, pool, amountIn, amountOutMinimum, chainId }`
+- `POST /api/preflight-raw` — raw: `{ to, data, chainId }` for arbitrary calldata (UniversalRouter, etc.)
+- `POST /api/score` — pool scoring: `{ protocol, pool, chainId, amountIn }`
+- `GET  /api/audit?protocol=prism&chainId=4326` — full protocol audit JSON
+- `GET  /api/integrations` — integration catalogue used by the web UI
+
 ## Architecture
 
 ```
@@ -70,15 +91,17 @@ riskclaw-daemon/
   packages/
     claw-core/        Skill + adapter interfaces (zero deps)
     claw-adapters/    Real EVM (viem) + mock implementations
-    claw-protocols/   One folder per protocol — kumbaya/, prism/ (next), tulpea/ (next)
+    claw-protocols/   One folder per protocol — kumbaya/, prism/ (live), tulpea/ (next)
+                      + shared modules: token-patterns, pool-patterns, universal-router
   apps/
-    daemon/           Skill registry + per-skill context builder
-    cli/              `claw skills | run | invoke | preflight`
+    daemon/           Skill registry + per-skill context builder + audit module
+    cli/              `claw skills | run | invoke | preflight | audit`
+    web/              Local web UI + JSON API (Bun.serve) — preflight, score, audit endpoints
   skills/
     0g-uniswap-hook/    Hackathon thesis ported onto the kernel
     mega-vault-exiter/  Bounded-delegation auto-exiter (vault positions)
-    mega-preflight/     Pre-flight risk co-pilot (request/response)
-    mega-aggregator/    DEX route scoring (request/response)
+    mega-preflight/     Pre-flight risk co-pilot (request/response, multi-protocol)
+    mega-aggregator/    DEX route scoring (request/response, multi-decoder)
 ```
 
 Each skill declares a `SkillManifest` (chain target, required adapters), then
@@ -99,20 +122,25 @@ adapters into the skill via `SkillContext`.
 
 | Protocol | Chain | Status |
 |---|---|---|
-| Kumbaya (Uniswap V3 fork) | MegaETH 4326, 6343 | live: pool risk + `exactInputSingle`/`exactOutputSingle` calldata decode + CREATE2 pool derivation |
-| Prism vaults | MegaETH | next |
-| Tulpea RWA lending | MegaETH | next |
+| Kumbaya (UniV3 fork DEX) | MegaETH 4326, 6343 | live: pool risk + `exactInputSingle`/`exactOutputSingle` calldata decode + UniversalRouter command-stream + CREATE2 pool derivation |
+| Prism (UniV3 DEX) | MegaETH 4326 | live: pool risk + UniversalRouter calldata decode (router `0x955d56…223f` recovered on-chain, factory-verified) |
+| Tulpea (RWA lending) | MegaETH | next |
 
-## What the Kumbaya decoder catches today
+## What the decoders catch today
 
-- **Slippage protection**: flags `amountOutMinimum=0` (no MEV sandwich
-  protection)
-- **V3 oracle health**: surfaces `observationCardinality < 10` as
-  unreliable-TWAP signal; `cardinality=1` means the TWAP is the most recent
-  block's spot price, manipulable in a single block
+These signals fire identically across Kumbaya and Prism — they share `pool-patterns.ts` and `token-patterns.ts`.
+
+- **Slippage protection**: flags `amountOutMinimum=0` (no MEV sandwich protection)
+- **Token bytecode templates**: hashes token bytecode against a curated scam-template set (seeded from a 6-token mass-deployment cluster discovered on Prism)
+- **Mintable / pausable tokens**: bytecode scan for `mint(address,uint256)` and `pause()` selectors → admin-rug risk
+- **Vanity-suffix + 1e27 supply**: catches new memecoin scam shapes without bytecode-hash match
+- **Stable-pair de-peg**: for stable/stable pools, computes implied price from `slot0.sqrtPriceX96` and flags >2% deviation from $1
+- **V3 oracle health**: surfaces `observationCardinality < 10` as unreliable-TWAP signal; `cardinality=1` means the TWAP is the most recent block's spot price, manipulable in a single block
 - **Liquidity depth**: flags pools with `liquidity < 1e6` as thin / dead
-- **TVL drift**: reads `balanceOf` at `latest` and `latest - 300` blocks
-  (~5 min on 1s EVM blocks); flags >10% drift
+- **TVL drift, two windows**: 5-min (`latest - 300` blocks) for fast drains, 2-hour (`latest - 7200`) for slow drains
+- **Reentrancy state**: flags pools where `slot0.unlocked == false` at read time
+- **Sim revert classification**: downgrades severity when the protocol context is recognized (e.g. STF revert during simulation usually means missing token approval, not a malicious target)
+- **UniversalRouter command stream**: decodes `V3_SWAP_EXACT_IN` / `V3_SWAP_EXACT_OUT` commands, reconstructs each hop's pool via CREATE2, scores every pool in the path
 - **Reentrancy state**: flags pools where `slot0.unlocked == false` at read
   time
 - **Sim revert**: classifies revert reason; downgrades severity when the

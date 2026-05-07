@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>prism · riskclaw integrations</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="/">riskclaw<span class="cursor">_</span></a>
+    <nav>
+      <a href="/#widget">preflight</a>
+      <a href="/#score-widget">score</a>
+      <a href="/#architecture">architecture</a>
+      <a href="/#integrations">integrations</a>
+      <a href="/#quickstart">quickstart</a>
+      <a href="https://github.com/Truunik/riskclaw-daemon" target="_blank" rel="noopener">github →</a>
+    </nav>
+  </header>
+
+  <main>
+    <p class="crumbs"><a href="/">/</a> / <a href="/#integrations">integrations</a> / prism</p>
+
+    <section class="hero">
+      <h1>prism <span class="muted" style="font-size:14px;">· UniV3-style DEX on MegaETH (custom-fee variants)</span></h1>
+      <p class="lede">
+        Prism (<a href="https://prismfi.cc" target="_blank" rel="noopener">prismfi.cc</a>) is a UniV3-style AMM
+        with custom-fee routing (SelectiveTaxRouter), part of the broader Prism product suite (Swap / Pools / Predict / Earn-via-Beefy).
+        <span class="ok">surface: live · UniversalRouter recognized · pool scoring</span>
+      </p>
+      <p class="meta">
+        decoder source ·
+        <a href="https://github.com/Truunik/riskclaw-daemon/tree/main/packages/claw-protocols/src/prism" target="_blank" rel="noopener">packages/claw-protocols/src/prism/</a>
+        · docs · <a href="https://prismfi.cc/docs/overview" target="_blank" rel="noopener">prismfi.cc/docs/overview</a>
+      </p>
+    </section>
+
+    <section>
+      <h2>// addresses · chainId 4326 (MegaETH mainnet)</h2>
+      <dl class="dl">
+        <dt>factory</dt><dd><code>0x1adb8f973373505bb206e0e5d87af8fb1f5514ef</code></dd>
+        <dt>positionManager</dt><dd><code>0xcb91c75a6b29700756d4411495be696c4e9a576e</code></dd>
+        <dt>universalRouter</dt><dd><code>0x955d56F6391a496231509134e0d2Beadf82a223f</code> <span class="muted">· factory-verified, selector 0x3593564c</span></dd>
+        <dt>weth</dt><dd><code>0x4200000000000000000000000000000000000006</code></dd>
+      </dl>
+      <p class="muted">testnet 6343 does not host Prism. SwapRouter02 / QuoterV2 / SelectiveTaxRouter addresses still pending — Prism's docs name them but don't publish addresses, and they don't appear in tx.to traces from sampled Prism-pool swaps. UniversalRouter was recovered on-chain by tracing transactions from real swaps and verifying the bytecode contains the Prism factory address as an immutable.</p>
+
+      <h2>// pool init code hash</h2>
+      <p><code>0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54</code></p>
+      <p class="muted">canonical Uniswap V3 init code hash — verified by deriving pool <code>0x1B6C4857d44286B7C7d7F35f2E03fbf204e070E1</code> byte-perfect from <code>(factory, token0, token1, fee=10000)</code>.</p>
+    </section>
+
+    <section>
+      <h2>// what's caught</h2>
+      <p>same UniV3 read surface as Kumbaya — all signals work identically against Prism pools.</p>
+      <ul>
+        <li><strong>UniversalRouter target recognition</strong> — preflight identifies a tx as a Prism swap when its <code>to</code> field hits the canonical UniversalRouter</li>
+        <li>Pool liquidity depth + reentrancy state via <code>slot0</code> + <code>liquidity</code></li>
+        <li>V3 oracle observation cardinality</li>
+        <li>TVL drift via <code>balanceOf</code> at <code>latest-300</code> blocks (~5 min)</li>
+        <li>Sim-revert classification — softer signal when the target is a recognized Prism contract</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>// surfaces</h2>
+      <p><strong>aggregator-score</strong> — fully wired. Score any Prism pool via <code>mega-aggregator.score</code>. Try it on the <a href="/#score-widget">live widget</a> with pool <code>0xC2FaC0B5B6C075819E654bcFbBBCda2838609d32</code> (healthy: cardinality 2 000, active liquidity).</p>
+      <p><strong>preflight</strong> — <span class="ok">live · router-recognized</span>. Sending a Prism UniversalRouter tx through <code>mega-preflight.check</code> returns a <code>protocol: { name: 'prism', recognized: 'router' }</code> partial verdict + simulation result + scoring of any pools you reference. Full <strong>UniversalRouter calldata decoding</strong> is on backlog (same gap as Kumbaya UniversalRouter — uses a command-stream encoding that needs its own parser).</p>
+    </section>
+
+    <section>
+      <h2>// try it · pool scoring (simple case)</h2>
+      <pre><code>curl -X POST http://localhost:4242/api/score \
+  -H 'content-type: application/json' \
+  -d '{"protocol":"prism","chainId":4326,"pool":"0xC2FaC0B5B6C075819E654bcFbBBCda2838609d32","amountIn":"1000000"}'
+
+# returns ALLOW/0 for the healthy pool above. swap in 0x1B6C…70E1 to see WARN/5500
+# (zero liquidity + cardinality=1) or any *b1d-token pool to see token-pattern flags.</code></pre>
+
+      <h2>// try it · raw preflight (Prism UniversalRouter tx)</h2>
+      <p>For a real Prism swap, send the user's calldata + <code>to</code> directly:</p>
+      <pre><code>curl -X POST http://localhost:4242/api/preflight-raw \
+  -H 'content-type: application/json' \
+  -d '{
+    "to": "0x955d56F6391a496231509134e0d2Beadf82a223f",
+    "data": "0x3593564c…",
+    "chainId": 4326
+  }'</code></pre>
+      <p class="muted">Returns the verdict with <code>protocol.name === "prism"</code> + simulation outcome.</p>
+    </section>
+
+    <section>
+      <h2>// open items</h2>
+      <ul>
+        <li><strong>UniversalRouter command-stream decoding</strong> — the highest-impact next step. Each command (<code>V3_SWAP_EXACT_IN</code>, <code>V3_SWAP_EXACT_OUT</code>, <code>PERMIT2_PERMIT</code>, <code>WRAP_ETH</code>, <code>UNWRAP_WETH</code>, <code>SWEEP</code>) has its own encoding. Lands as a shared <code>univ3-universal-router</code> module benefiting both Kumbaya and Prism.</li>
+        <li><strong>SwapRouter02 + QuoterV2 + SelectiveTaxRouter</strong> — Prism docs name them; addresses still not published and not visible in <code>tx.to</code> traces from sampled swaps. If you have authoritative addresses, drop a PR or open an issue.</li>
+        <li>Multi-hop path decoding (same gap as Kumbaya — single-pool variants only today).</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="bar foot">
+    <span>riskclaw-daemon · MIT</span>
+    <span><a href="https://github.com/Truunik/riskclaw-daemon" target="_blank" rel="noopener">source</a></span>
+  </footer>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import { parseAbi } from 'viem';
 
-export const KUMBAYA_POOL_ABI = parseAbi([
+// Prism is a UniV3-style AMM on MegaETH — pool ABI is canonical Uniswap V3.
+export const PRISM_POOL_ABI = parseAbi([
   'function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)',
   'function liquidity() view returns (uint128)',
   'function token0() view returns (address)',

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>kumbaya · riskclaw integrations</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="/">riskclaw<span class="cursor">_</span></a>
+    <nav>
+      <a href="/#widget">preflight</a>
+      <a href="/#score-widget">score</a>
+      <a href="/#architecture">architecture</a>
+      <a href="/#integrations">integrations</a>
+      <a href="/#quickstart">quickstart</a>
+      <a href="https://github.com/Truunik/riskclaw-daemon" target="_blank" rel="noopener">github →</a>
+    </nav>
+  </header>
+
+  <main>
+    <p class="crumbs"><a href="/">/</a> / <a href="/#integrations">integrations</a> / kumbaya</p>
+
+    <section class="hero">
+      <h1>kumbaya <span class="muted" style="font-size:14px;">· UniV3-fork DEX on MegaETH</span></h1>
+      <p class="lede">
+        Kumbaya is the largest TVL DEX on MegaETH (~$51M) and the first integration target for both
+        <code>mega-preflight</code> and <code>mega-aggregator</code>. Live on
+        <strong>chainId 4326 (mainnet)</strong> and <strong>6343 (testnet — Carrot)</strong>.
+        <span class="ok">surface: live</span>
+      </p>
+      <p class="meta">
+        decoder source ·
+        <a href="https://github.com/Truunik/riskclaw-daemon/tree/main/packages/claw-protocols/src/kumbaya" target="_blank" rel="noopener">packages/claw-protocols/src/kumbaya/</a>
+      </p>
+    </section>
+
+    <section>
+      <h2>// addresses · chainId 4326 (MegaETH mainnet)</h2>
+      <dl class="dl">
+        <dt>factory</dt><dd><code>0x68b34591f662508076927803c567Cc8006988a09</code></dd>
+        <dt>router02</dt><dd><code>0xE5BbEF8De2DB447a7432A47EBa58924d94eE470e</code></dd>
+        <dt>universalRouter</dt><dd><code>0xAAB1C664CeaD881AfBB58555e6A3a79523D3e4C0</code></dd>
+        <dt>positionManager</dt><dd><code>0x2b781C57e6358f64864Ff8EC464a03Fdaf9974bA</code></dd>
+        <dt>quoter</dt><dd><code>0x1F1a8dC7E138C34b503Ca080962aC10B75384a27</code></dd>
+        <dt>weth</dt><dd><code>0x4200000000000000000000000000000000000006</code></dd>
+      </dl>
+
+      <h2>// addresses · chainId 6343 (testnet · Carrot)</h2>
+      <dl class="dl">
+        <dt>factory</dt><dd><code>0x53447989580f541bc138d29A0FcCf72AfbBE1355</code></dd>
+        <dt>router02</dt><dd><code>0x8268DC930BA98759E916DEd4c9F367A844814023</code></dd>
+        <dt>universalRouter</dt><dd><code>0x7E6c4Ada91e432efe5F01FbCb3492Bd3eb7ccD2E</code></dd>
+        <dt>positionManager</dt><dd><code>0x367f9db1F974eA241ba046b77B87C58e2947d8dF</code></dd>
+        <dt>quoter</dt><dd><code>0xfb230b93803F90238cB03f254452bA3a3b0Ec38d</code></dd>
+        <dt>weth</dt><dd><code>0x4200000000000000000000000000000000000006</code></dd>
+      </dl>
+
+      <h2>// pool init code hash</h2>
+      <p><code>0x851d77a45b8b9a205fb9f44cb829cceba85282714d2603d601840640628a3da7</code></p>
+      <p class="muted">used by <code>computeKumbayaPoolAddress(factory, t0, t1, fee)</code> to derive any pool's address from token pair + fee — verified byte-perfect against on-chain pools.</p>
+    </section>
+
+    <section>
+      <h2>// what's caught</h2>
+      <table>
+        <thead><tr><th>signal</th><th>source</th><th>severity</th></tr></thead>
+        <tbody>
+          <tr><td>amountOutMinimum = 0</td><td>swap calldata</td><td class="block">+9000 bps · BLOCK</td></tr>
+          <tr><td>liquidity &lt; 1000</td><td>pool.liquidity()</td><td class="block">+5000 bps</td></tr>
+          <tr><td>liquidity &lt; 1e6</td><td>pool.liquidity()</td><td class="warn">+2000 bps</td></tr>
+          <tr><td>TVL drop ≥ 30% / 5 min</td><td>token.balanceOf at latest-300</td><td class="block">+5000 bps</td></tr>
+          <tr><td>TVL drop ≥ 10% / 5 min</td><td>token.balanceOf at latest-300</td><td class="warn">+1000 bps</td></tr>
+          <tr><td>oracle cardinality = 0</td><td>slot0.observationCardinality</td><td class="warn">+1500 bps</td></tr>
+          <tr><td>oracle cardinality &lt; 10</td><td>slot0.observationCardinality</td><td class="warn">+500 bps</td></tr>
+          <tr><td>reentrancy lock engaged</td><td>slot0.unlocked == false</td><td class="warn">+2000 bps</td></tr>
+          <tr><td>sim revert (recognized protocol)</td><td>eth_call</td><td class="warn">+5000 bps</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>// surfaces</h2>
+      <p><strong>preflight</strong> — full calldata-aware. Recognizes router02 / universalRouter / quoter / posMgr / factory targets; decodes <code>exactInputSingle</code> + <code>exactOutputSingle</code>; pulls tokens from on-chain when not in calldata; runs simulation with revert classification.</p>
+      <p><strong>aggregator-score</strong> — pool-only. Reads <code>slot0</code>, <code>liquidity</code>, <code>balanceOf</code> at <code>latest-300</code>. Returns <code>PoolRisk { riskBps, reasons, components }</code>.</p>
+    </section>
+
+    <section>
+      <h2>// try it</h2>
+      <p>preflight a real Kumbaya swap on mainnet:</p>
+      <pre><code>bun run claw preflight kumbaya \
+  0xbc91070ad1B65B8EBec3a71bF8bA6b212f130Ca3 1e18 0</code></pre>
+      <p>or via the <a href="/#widget">live widget</a>. testnet pool: <code>0x1EE2f89CD8a025D3262eC8C7e817AAB42Bc61a75</code>.</p>
+    </section>
+
+    <section>
+      <h2>// open items</h2>
+      <ul>
+        <li>Multi-hop <code>exactInput</code> / <code>exactOutput</code> path decoding (single-pool variants are decoded today).</li>
+        <li>UniversalRouter command-stream parser (SwapRouter02 path is fully decoded).</li>
+        <li>QuoterV2 integration to flag "amountOutMinimum is N% below expected" beyond just <code>=0</code>.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="bar foot">
+    <span>riskclaw-daemon · MIT</span>
+    <span><a href="https://github.com/Truunik/riskclaw-daemon" target="_blank" rel="noopener">source</a></span>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>riskclaw — preflight DeFi tx on MegaETH</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="/">riskclaw<span class="cursor">_</span></a>
+    <nav>
+      <a href="/#ecosystem">ecosystem</a>
+      <a href="/#widget">preflight</a>
+      <a href="/#score-widget">score</a>
+      <a href="/#architecture">architecture</a>
+      <a href="/#integrations">integrations</a>
+      <a href="/#quickstart">quickstart</a>
+      <a href="https://github.com/Truunik/riskclaw-daemon" target="_blank" rel="noopener">github →</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>preflight DeFi transactions on <span class="accent">MegaETH</span> before your wallet broadcasts.</h1>
+      <p class="lede">
+        Decode a proposed tx, derive its destination state via CREATE2, read live pool / position data, return
+        <span class="ok">ALLOW</span> / <span class="warn">WARN</span> / <span class="block">BLOCK</span> in under a second.
+        On 1s EVM blocks, the entire preflight loop fits in the signing path.
+      </p>
+      <p class="meta">
+        kernel + skills · MIT · built by an <a href="https://xerberus.io" target="_blank" rel="noopener">Xerberus</a> maintainer ·
+        <a href="https://github.com/Truunik/RiskClaw" target="_blank" rel="noopener">ETHGlobal RiskClaw</a> successor
+      </p>
+    </section>
+
+    <section id="ecosystem" class="ecosystem">
+      <div class="widget-head">
+        <h2>// ecosystem</h2>
+        <p class="muted">where riskclaw lives. click a bubble for the full integration surface.</p>
+      </div>
+      <div class="bubbles" id="bubbles" aria-label="ecosystem map">
+        <svg viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid meet" id="bubbles-svg" role="img">
+          <defs>
+            <radialGradient id="g-live" cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stop-color="#a9efd6" />
+              <stop offset="100%" stop-color="#3d9a7d" />
+            </radialGradient>
+            <radialGradient id="g-warn" cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stop-color="#f1cf85" />
+              <stop offset="100%" stop-color="#a07a2d" />
+            </radialGradient>
+            <radialGradient id="g-stub" cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stop-color="#ef9b99" />
+              <stop offset="100%" stop-color="#7a3735" />
+            </radialGradient>
+          </defs>
+
+          <!-- MegaETH cluster -->
+          <g class="cluster" id="cluster-megaeth">
+            <ellipse cx="320" cy="210" rx="290" ry="170" />
+            <text x="320" y="62" class="cluster-label">MegaETH · 4326 / 6343</text>
+            <text x="320" y="380" class="cluster-meta">~1s blocks · realtime EVM</text>
+          </g>
+
+          <!-- 0G cluster (far away) -->
+          <g class="cluster" id="cluster-og">
+            <ellipse cx="870" cy="210" rx="115" ry="105" />
+            <text x="870" y="92" class="cluster-label">0G Galileo · 16602</text>
+            <text x="870" y="335" class="cluster-meta">storage + compute</text>
+          </g>
+
+          <!-- bubbles -->
+          <g class="bubble" data-name="kumbaya" data-href="/integrations/kumbaya"
+             data-base-x="220" data-base-y="220"
+             data-fx="0.0009" data-fy="0.0011" data-px="0" data-py="1.4"
+             transform="translate(220,220)">
+            <circle cx="0" cy="0" r="78" fill="url(#g-live)" />
+            <text class="bubble-label" x="0" y="-4">Kumbaya</text>
+            <text class="bubble-sub" x="0" y="14">UniV3 fork</text>
+            <text class="bubble-status" x="0" y="32">live</text>
+          </g>
+
+          <g class="bubble" data-name="prism" data-href="/integrations/prism"
+             data-base-x="430" data-base-y="200"
+             data-fx="0.0013" data-fy="0.0008" data-px="2.1" data-py="0"
+             transform="translate(430,200)">
+            <circle cx="0" cy="0" r="58" fill="url(#g-live)" />
+            <text class="bubble-label" x="0" y="-4">Prism</text>
+            <text class="bubble-sub" x="0" y="12">UniV3 DEX</text>
+            <text class="bubble-status" x="0" y="28">live</text>
+          </g>
+
+          <g class="bubble" data-name="0g-uniswap-hook" data-href="https://github.com/Truunik/RiskClaw" data-external="1"
+             data-base-x="870" data-base-y="210"
+             data-fx="0.0015" data-fy="0.001" data-px="3.8" data-py="2.5"
+             transform="translate(870,210)">
+            <circle cx="0" cy="0" r="42" fill="url(#g-stub)" />
+            <text class="bubble-label" x="0" y="-2">0G hook</text>
+            <text class="bubble-sub" x="0" y="12">v4-style</text>
+            <text class="bubble-status" x="0" y="26">stub</text>
+          </g>
+        </svg>
+        <div class="bubbles-legend">
+          <span><span class="dot live"></span> live · preflight + scoring</span>
+          <span><span class="dot warn"></span> scoring-only · routers pending</span>
+          <span><span class="dot block"></span> stub · TODO calldata encode</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="widget" class="widget">
+      <div class="widget-head">
+        <h2>// live preflight</h2>
+        <p class="muted">paste a Kumbaya pool on MegaETH mainnet (4326) or testnet (6343). no wallet, no signer — read-only.</p>
+      </div>
+      <form id="preflight-form" class="form">
+        <label>
+          <span>chain</span>
+          <select name="chainId">
+            <option value="4326" selected>4326 — MegaETH mainnet</option>
+            <option value="6343">6343 — MegaETH testnet (Carrot)</option>
+          </select>
+        </label>
+        <label>
+          <span>pool</span>
+          <input type="text" name="pool" placeholder="0x…" value="0xbc91070ad1B65B8EBec3a71bF8bA6b212f130Ca3" required />
+        </label>
+        <label>
+          <span>amountIn</span>
+          <input type="text" name="amountIn" placeholder="1e18" value="1e18" required />
+        </label>
+        <label>
+          <span>amountOutMinimum</span>
+          <input type="text" name="amountOutMinimum" placeholder="0" value="0" required />
+        </label>
+        <button type="submit" id="run-btn">run preflight</button>
+        <p class="hint">tip: amountOutMinimum=0 is the canonical "no slippage protection" footgun. the daemon flags it as BLOCK.</p>
+      </form>
+      <pre id="output" class="output" aria-live="polite">// verdict appears here</pre>
+    </section>
+
+    <section id="score-widget" class="widget">
+      <div class="widget-head">
+        <h2>// live route scoring · mega-aggregator</h2>
+        <p class="muted">score any pool in isolation via the aggregator skill. works for kumbaya (both nets) and prism (mainnet only).</p>
+      </div>
+      <form id="score-form" class="form">
+        <label>
+          <span>protocol</span>
+          <select name="protocol">
+            <option value="kumbaya">kumbaya</option>
+            <option value="prism" selected>prism</option>
+          </select>
+        </label>
+        <label>
+          <span>chain</span>
+          <select name="chainId">
+            <option value="4326" selected>4326 — mainnet</option>
+            <option value="6343">6343 — testnet</option>
+          </select>
+        </label>
+        <label>
+          <span>pool</span>
+          <input type="text" name="pool" placeholder="0x…" value="0xC2FaC0B5B6C075819E654bcFbBBCda2838609d32" required />
+        </label>
+        <label>
+          <span>amountIn (informational)</span>
+          <input type="text" name="amountIn" placeholder="1000000" value="1000000" />
+        </label>
+        <button type="submit" id="score-btn">score pool</button>
+        <p class="hint">scoring reads slot0, liquidity, balanceOf at <code>latest-300</code> blocks, and oracle cardinality. no signer needed.</p>
+      </form>
+      <pre id="score-output" class="output" aria-live="polite">// risk score appears here</pre>
+    </section>
+
+    <section id="architecture" class="architecture">
+      <h2>// architecture</h2>
+      <p class="muted">kernel + skills. skills declare a manifest, ask for adapters, and either stream or expose request handlers. swap decoders are reusable across skills.</p>
+      <pre class="diagram"><code>      ┌──────────────────────────────────────────────────────────────┐
+      │                       skill registry                          │
+      │   0g-uniswap-hook · mega-vault-exiter · mega-preflight ·      │
+      │                     mega-aggregator                           │
+      └─────────────────────────────┬────────────────────────────────┘
+                                    │ buildContext(manifest, env)
+                                    ▼
+      ┌──────────────────────────────────────────────────────────────┐
+      │                     SkillContext                              │
+      │   chain · signer · compute · storage · logger · env           │
+      └─────┬───────────┬───────────┬───────────┬─────────────────────┘
+            │           │           │           │
+            ▼           ▼           ▼           ▼
+       ┌────────┐  ┌────────┐  ┌────────┐  ┌─────────┐
+       │  EVM   │  │ Signer │  │  TEE   │  │ Content │
+       │realtime│  │realtime│  │ compute│  │ storage │
+       └────┬───┘  └────────┘  └────────┘  └─────────┘
+            │ readContract · subscribe · simulateAfter
+            ▼
+       ┌──────────────────────────────────────────────┐
+       │              SwapDecoder[]                    │
+       │   KumbayaDecoder · PrismDecoder · …          │
+       │   supports / recognize / scorePool            │
+       └──────────────────────────────────────────────┘
+            ▲
+            │ one folder per protocol — abi, addresses, decode
+       packages/claw-protocols/src/&lt;protocol&gt;/</code></pre>
+      <p class="muted">adding a protocol is one folder + one line in the skill's decoder array. the kernel stays generic, the protocols stay pluggable.</p>
+    </section>
+
+    <section id="integrations" class="cards">
+      <h2>// integrations</h2>
+      <p class="muted">one folder per protocol. each exports a <code>SwapDecoder</code> the skills register at boot. click a card for full surface details.</p>
+      <div id="integration-grid" class="grid"></div>
+    </section>
+
+    <section id="signals" class="signals">
+      <h2>// risk signals</h2>
+      <p class="muted">what the kumbaya decoder catches today. the prism decoder uses the same UniV3 read surface (slot0, liquidity, balanceOf at lookback block).</p>
+      <table>
+        <thead><tr><th>signal</th><th>source</th><th>severity</th></tr></thead>
+        <tbody>
+          <tr><td>amountOutMinimum = 0</td><td>swap calldata</td><td class="block">+9000 bps · BLOCK</td></tr>
+          <tr><td>token bytecode matches scam template</td><td>keccak(getCode) ∈ curated set</td><td class="block">+6000 bps</td></tr>
+          <tr><td>liquidity &lt; 1000</td><td>pool.liquidity()</td><td class="block">+5000 bps</td></tr>
+          <tr><td>stable/stable pair off-peg ≥ 20%</td><td>sqrtPriceX96 vs $1.00</td><td class="block">+5000 bps</td></tr>
+          <tr><td>stable/stable pair off-peg ≥ 5%</td><td>sqrtPriceX96 vs $1.00</td><td class="warn">+3000 bps</td></tr>
+          <tr><td>vanity-suffix + 1e27 supply</td><td>address pattern + totalSupply</td><td class="warn">+3000 bps</td></tr>
+          <tr><td>TVL drop ≥ 30% / 5 min</td><td>token.balanceOf at latest-300</td><td class="block">+5000 bps</td></tr>
+          <tr><td>TVL drop ≥ 20% / 2h</td><td>token.balanceOf at latest-7200</td><td class="warn">+3000 bps</td></tr>
+          <tr><td>TVL drop ≥ 10% / 5 min</td><td>token.balanceOf at latest-300</td><td class="warn">+1000 bps</td></tr>
+          <tr><td>token has mint() selector</td><td>getCode bytecode scan</td><td class="warn">+2000 bps</td></tr>
+          <tr><td>liquidity &lt; 1e6</td><td>pool.liquidity()</td><td class="warn">+2000 bps</td></tr>
+          <tr><td>reentrancy lock engaged</td><td>slot0.unlocked == false</td><td class="warn">+2000 bps</td></tr>
+          <tr><td>stable/stable pair off-peg ≥ 2%</td><td>sqrtPriceX96 vs $1.00</td><td class="warn">+1500 bps</td></tr>
+          <tr><td>oracle cardinality = 0</td><td>slot0.observationCardinality</td><td class="warn">+1500 bps</td></tr>
+          <tr><td>token has pause() selector</td><td>getCode bytecode scan</td><td class="warn">+1500 bps</td></tr>
+          <tr><td>oracle cardinality &lt; 10</td><td>slot0.observationCardinality</td><td class="warn">+500 bps</td></tr>
+          <tr><td>sim revert (unrecognized target)</td><td>eth_call</td><td class="block">+10000 bps</td></tr>
+          <tr><td>sim revert (recognized protocol)</td><td>eth_call</td><td class="warn">+5000 bps</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="quickstart" class="quickstart">
+      <h2>// quickstart</h2>
+      <p class="muted">three steps. zero hosted infra. your own RPC, your own keys.</p>
+      <pre><code>git clone https://github.com/Truunik/riskclaw-daemon
+cd riskclaw-daemon
+bun install
+
+# preflight a real Kumbaya swap on mainnet (chainId 4326)
+bun run claw preflight kumbaya 0xbc91070ad1B65B8EBec3a71bF8bA6b212f130Ca3 1e18 0
+
+# score a route via the aggregator skill
+MEGAETH_CHAIN_ID=4326 MEGAETH_RPC_URL=https://mainnet.megaeth.com/rpc \
+  bun run claw invoke mega-aggregator score '{"amountIn":"1000000","hops":[{"address":"0x…","protocol":"prism","fromToken":"0x…","toToken":"0x…"}]}'</code></pre>
+
+      <h3>add a protocol decoder</h3>
+      <pre><code>// packages/claw-protocols/src/&lt;your-protocol&gt;/index.ts
+import type { SwapDecoder } from '../types.ts';
+
+export const YourDecoder: SwapDecoder = {
+  name: 'your-protocol',
+  supports: (chainId) =&gt; chainId === 4326,
+  recognize: (target) =&gt; target.toLowerCase() === ROUTER_ADDRESS,
+  scorePool: async (pool, chainId, ctx) =&gt; {
+    // read live pool state via ctx.chain.readContract({...})
+    // return { protocol, poolAddress, riskBps, reasons, components }
+  },
+};</code></pre>
+      <p class="muted">register in <code>skills/mega-aggregator/src/index.ts</code> · <code>const DECODERS = [KumbayaDecoder, PrismDecoder, YourDecoder];</code></p>
+    </section>
+
+    <section id="status" class="status">
+      <h2>// what's verified</h2>
+      <p class="muted">honesty matters. green = exercised end-to-end on live RPC. amber = implemented, not yet exercised. red = stub.</p>
+      <table>
+        <thead><tr><th>surface</th><th>status</th></tr></thead>
+        <tbody>
+          <tr><td>typecheck across workspace</td><td class="ok">verified</td></tr>
+          <tr><td>kumbaya preflight · mainnet 4326</td><td class="ok">verified</td></tr>
+          <tr><td>kumbaya preflight · testnet 6343</td><td class="ok">verified</td></tr>
+          <tr><td>mega-aggregator score · prism mainnet</td><td class="ok">verified</td></tr>
+          <tr><td>mega-aggregator score · kumbaya testnet</td><td class="ok">verified</td></tr>
+          <tr><td>WS subscribe via eth_subscribe stateChanges</td><td class="warn">unverified</td></tr>
+          <tr><td>realtime_sendRawTransaction (one-RTT receipts)</td><td class="warn">unverified</td></tr>
+          <tr><td>eth_callAfter (gated simulation)</td><td class="warn">unverified</td></tr>
+          <tr><td>mega-vault-exiter evaluate path</td><td class="block">stub — TODO per-protocol decoders</td></tr>
+          <tr><td>0g-uniswap-hook updatePolicy calldata</td><td class="block">stub — TODO viem ABI encode</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer class="bar foot">
+    <span>riskclaw-daemon · MIT</span>
+    <span><a href="https://github.com/Truunik/RiskClaw" target="_blank" rel="noopener">RiskClaw (ETHGlobal)</a> → <a href="https://github.com/Truunik/riskclaw-daemon" target="_blank" rel="noopener">riskclaw-daemon</a></span>
+  </footer>
+
+  <script src="/widget.js"></script>
+</body>
+</html>

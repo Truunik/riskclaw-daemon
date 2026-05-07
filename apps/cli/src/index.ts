@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { buildContext, registry } from '@claw/daemon';
+import { buildContext, registry, auditProtocol, formatAuditText } from '@claw/daemon';
 import { buildExactInputSingleCalldata } from '@claw/protocols';
 
 const [, , cmd, ...args] = process.argv;
@@ -108,6 +108,19 @@ async function main() {
       return;
     }
 
+    case 'audit': {
+      const [protocol, chainArg] = args;
+      if (protocol !== 'kumbaya' && protocol !== 'prism') {
+        die(`usage: claw audit <kumbaya|prism> [chainId]`);
+      }
+      const chainId = chainArg ? Number(chainArg) : 4326;
+      const json = process.env.JSON === '1' || process.env.AUDIT_JSON === '1';
+      const audit = await auditProtocol({ protocol, chainId });
+      if (json) console.log(JSON.stringify(audit, null, 2));
+      else console.log(formatAuditText(audit));
+      return;
+    }
+
     default: {
       console.log('claw — riskclaw-daemon CLI');
       console.log('');
@@ -116,10 +129,12 @@ async function main() {
       console.log('  claw invoke <skill> <handler> [json]                   call a request/response handler');
       console.log('  claw preflight kumbaya <pool> <amountIn> <amountOutMin>');
       console.log('                                                         pre-flight a Kumbaya swap (defaults to mainnet)');
+      console.log('  claw audit <kumbaya|prism> [chainId]                   protocol-level security scan');
       console.log('');
       console.log('env:');
       console.log('  MEGAETH_CHAIN_ID     4326 (mainnet, default for preflight) or 6343 (testnet)');
       console.log('  MEGAETH_RPC_URL      defaults: mainnet=https://mainnet.megaeth.com/rpc, testnet=https://carrot.megaeth.com/rpc');
+      console.log('  JSON=1               for `claw audit`, output structured JSON instead of pretty text');
     }
   }
 }

@@ -1,9 +1,8 @@
-import { encodeFunctionData, type Hex } from 'viem';
+import { encodeAbiParameters, getCreate2Address, keccak256, type Hex } from 'viem';
 import type { SkillContext } from '@claw/core';
 import type { PoolRisk, SwapDecoder } from '../types.ts';
-import { KUMBAYA_ADDRESSES, kumbayaContracts } from './addresses.ts';
-import { KUMBAYA_POOL_ABI } from './abi.ts';
-import { KUMBAYA_SWAP_ROUTER_ABI } from './router-abi.ts';
+import { PRISM_ADDRESSES, PRISM_POOL_INIT_CODE_HASH, prismContracts } from './addresses.ts';
+import { PRISM_POOL_ABI } from './abi.ts';
 import { poolTokenPatternRisk, getTokenDecimals } from '../token-patterns.ts';
 import { readTvlDriftAt, stablePairDePegRisk, type TvlDrift, type DePegRisk } from '../pool-patterns.ts';
 
@@ -18,36 +17,41 @@ interface PoolState {
   fee: number;
 }
 
-const TVL_LOOKBACK_SHORT = 300n;   // ~5 min on MegaETH 1s EVM blocks
+const TVL_LOOKBACK_SHORT = 300n;   // ~5 min on 1s EVM blocks
 const TVL_LOOKBACK_MEDIUM = 7200n; // ~2 hours — catches slow drains
 
-async function readPoolState(poolAddress: string, ctx: SkillContext): Promise<PoolState> {
-  const slot0 = await ctx.chain.readContract<readonly [bigint, number, number, number, number, number, boolean]>({
-    address: poolAddress,
-    abi: KUMBAYA_POOL_ABI,
-    functionName: 'slot0',
+export function computePrismPoolAddress(
+  factory: string,
+  tokenA: string,
+  tokenB: string,
+  fee: number,
+): string {
+  const [t0, t1] = tokenA.toLowerCase() < tokenB.toLowerCase()
+    ? [tokenA, tokenB]
+    : [tokenB, tokenA];
+  const salt = keccak256(
+    encodeAbiParameters(
+      [{ type: 'address' }, { type: 'address' }, { type: 'uint24' }],
+      [t0 as Hex, t1 as Hex, fee],
+    ),
+  );
+  return getCreate2Address({
+    from: factory as Hex,
+    salt,
+    bytecodeHash: PRISM_POOL_INIT_CODE_HASH as Hex,
   });
-  const liquidity = await ctx.chain.readContract<bigint>({
-    address: poolAddress,
-    abi: KUMBAYA_POOL_ABI,
-    functionName: 'liquidity',
-  });
-  const token0 = await ctx.chain.readContract<string>({
-    address: poolAddress,
-    abi: KUMBAYA_POOL_ABI,
-    functionName: 'token0',
-  });
-  const token1 = await ctx.chain.readContract<string>({
-    address: poolAddress,
-    abi: KUMBAYA_POOL_ABI,
-    functionName: 'token1',
-  });
-  const fee = await ctx.chain.readContract<number>({
-    address: poolAddress,
-    abi: KUMBAYA_POOL_ABI,
-    functionName: 'fee',
-  });
+}
 
+async function readPoolState(poolAddress: string, ctx: SkillContext): Promise<PoolState> {
+  const [slot0, liquidity, token0, token1, fee] = await Promise.all([
+    ctx.chain.readContract<readonly [bigint, number, number, number, number, number, boolean]>({
+      address: poolAddress, abi: PRISM_POOL_ABI, functionName: 'slot0',
+    }),
+    ctx.chain.readContract<bigint>({ address: poolAddress, abi: PRISM_POOL_ABI, functionName: 'liquidity' }),
+    ctx.chain.readContract<string>({ address: poolAddress, abi: PRISM_POOL_ABI, functionName: 'token0' }),
+    ctx.chain.readContract<string>({ address: poolAddress, abi: PRISM_POOL_ABI, functionName: 'token1' }),
+    ctx.chain.readContract<number>({ address: poolAddress, abi: PRISM_POOL_ABI, functionName: 'fee' }),
+  ]);
   return {
     sqrtPriceX96: slot0[0],
     tick: slot0[1],
@@ -139,24 +143,24 @@ function scoreFromState(
   };
 }
 
-export const KumbayaDecoder: SwapDecoder = {
-  name: 'kumbaya',
+export const PrismDecoder: SwapDecoder = {
+  name: 'prism',
 
   supports(chainId: number): boolean {
-    return chainId in KUMBAYA_ADDRESSES;
+    return chainId in PRISM_ADDRESSES;
   },
 
   recognize(target: string, chainId: number): boolean {
-    return kumbayaContracts(chainId).has(target.toLowerCase());
+    return prismContracts(chainId).has(target.toLowerCase());
   },
 
   async scorePool(poolAddress: string, chainId: number, ctx: SkillContext): Promise<PoolRisk> {
     if (!this.supports(chainId)) {
       return {
-        protocol: 'kumbaya',
+        protocol: 'prism',
         poolAddress,
         riskBps: 0,
-        reasons: [`kumbaya not deployed on chainId ${chainId}`],
+        reasons: [`prism not deployed on chainId ${chainId}`],
         components: {
           tvlDriftBps: null, tvlDriftMediumBps: null, spreadBps: null,
           inactiveLiquidity: null, oracleHealthBps: null,
@@ -177,64 +181,6 @@ export const KumbayaDecoder: SwapDecoder = {
       : { riskBps: 0, reasons: [], deviationBps: null };
 
     const { riskBps, reasons, components } = scoreFromState(state, tvlShort, tvlMedium, tokenPattern, dePeg);
-    return { protocol: 'kumbaya', poolAddress, riskBps, reasons, components };
+    return { protocol: 'prism', poolAddress, riskBps, reasons, components };
   },
 };
-
-export { computeKumbayaPoolAddress, decodeKumbayaSwap, type DecodedSwap } from './decode.ts';
-
-export interface BuildSwapCalldataInput {
-  pool: string;
-  amountIn: bigint;
-  amountOutMinimum: bigint;
-  recipient: string;
-  chainId: number;
-  ctx: SkillContext;
-}
-
-export interface BuiltSwapCalldata {
-  router: string;
-  data: Hex;
-  tokenIn: string;
-  tokenOut: string;
-  fee: number;
-}
-
-export async function buildExactInputSingleCalldata(
-  input: BuildSwapCalldataInput,
-): Promise<BuiltSwapCalldata> {
-  const addr = KUMBAYA_ADDRESSES[input.chainId];
-  if (!addr) throw new Error(`Kumbaya not deployed on chainId ${input.chainId}`);
-
-  let tokenIn: string;
-  let tokenOut: string;
-  let fee: number;
-  try {
-    [tokenIn, tokenOut, fee] = await Promise.all([
-      input.ctx.chain.readContract<string>({ address: input.pool, abi: KUMBAYA_POOL_ABI, functionName: 'token0' }),
-      input.ctx.chain.readContract<string>({ address: input.pool, abi: KUMBAYA_POOL_ABI, functionName: 'token1' }),
-      input.ctx.chain.readContract<number>({ address: input.pool, abi: KUMBAYA_POOL_ABI, functionName: 'fee' }),
-    ]);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `pool ${input.pool} is not a Kumbaya V3 pool on chainId ${input.chainId} (read failed: ${msg.split('\n')[0]})`,
-    );
-  }
-
-  const data = encodeFunctionData({
-    abi: KUMBAYA_SWAP_ROUTER_ABI,
-    functionName: 'exactInputSingle',
-    args: [{
-      tokenIn: tokenIn as Hex,
-      tokenOut: tokenOut as Hex,
-      fee,
-      recipient: input.recipient as Hex,
-      amountIn: input.amountIn,
-      amountOutMinimum: input.amountOutMinimum,
-      sqrtPriceLimitX96: 0n,
-    }],
-  });
-
-  return { router: addr.router02, data, tokenIn, tokenOut, fee };
-}

@@ -1,10 +1,37 @@
 import type { Skill, SkillContext } from '@claw/core';
 import {
   KumbayaDecoder,
+  PrismDecoder,
   decodeKumbayaSwap,
+  decodePrismSwap,
+  extractV3Swaps,
+  computeKumbayaPoolAddress,
+  computePrismPoolAddress,
+  KUMBAYA_ADDRESSES,
+  PRISM_ADDRESSES,
   type DecodedSwap,
+  type DecodedV3Swap,
   type PoolRisk,
+  type SwapDecoder,
 } from '@claw/protocols';
+
+function deriveProtocolPool(
+  protocolName: string,
+  chainId: number,
+  tokenIn: string,
+  tokenOut: string,
+  fee: number,
+): string | null {
+  if (protocolName === 'kumbaya') {
+    const addr = KUMBAYA_ADDRESSES[chainId];
+    return addr ? computeKumbayaPoolAddress(addr.factory, tokenIn, tokenOut, fee) : null;
+  }
+  if (protocolName === 'prism') {
+    const addr = PRISM_ADDRESSES[chainId];
+    return addr ? computePrismPoolAddress(addr.factory, tokenIn, tokenOut, fee) : null;
+  }
+  return null;
+}
 
 interface PreflightRequest {
   from: string;
@@ -12,12 +39,6 @@ interface PreflightRequest {
   data: string;
   value?: string;
   afterTx?: string;
-}
-
-interface KumbayaContext {
-  recognized: 'router' | 'swap';
-  swap?: SerializedSwap;
-  poolRisk?: PoolRisk;
 }
 
 interface SerializedSwap {
@@ -33,14 +54,30 @@ interface SerializedSwap {
   poolAddress: string;
 }
 
+interface ProtocolContext {
+  name: string;
+  recognized: 'router' | 'swap';
+  swap?: SerializedSwap;
+  poolRisk?: PoolRisk;
+}
+
 interface PreflightResponse {
   decision: 'ALLOW' | 'WARN' | 'BLOCK';
   reasons: string[];
   riskScoreBps: number;
   attestation?: string;
   memoRoot?: string;
-  kumbaya?: KumbayaContext;
+  protocol?: ProtocolContext;
+  /** @deprecated kept for one cycle; use `protocol` instead */
+  kumbaya?: ProtocolContext;
 }
+
+type DecodeFn = (data: string, chainId: number) => DecodedSwap | null;
+
+const DECODERS: { decoder: SwapDecoder; decode: DecodeFn }[] = [
+  { decoder: KumbayaDecoder, decode: decodeKumbayaSwap },
+  { decoder: PrismDecoder, decode: decodePrismSwap as DecodeFn },
+];
 
 function decisionFor(scoreBps: number): 'ALLOW' | 'WARN' | 'BLOCK' {
   if (scoreBps >= 8500) return 'BLOCK';
@@ -63,60 +100,118 @@ function serializeSwap(s: DecodedSwap): SerializedSwap {
   };
 }
 
-async function analyzeKumbaya(
+async function analyzeProtocol(
   req: PreflightRequest,
   chainId: number,
   ctx: SkillContext,
-): Promise<{ context: KumbayaContext; reasons: string[]; riskBps: number } | null> {
-  if (!KumbayaDecoder.recognize(req.to, chainId)) return null;
-  ctx.logger.info('kumbaya router detected', { to: req.to });
+): Promise<{ context: ProtocolContext; reasons: string[]; riskBps: number } | null> {
+  for (const { decoder, decode } of DECODERS) {
+    if (!decoder.supports(chainId)) continue;
+    if (!decoder.recognize(req.to, chainId)) continue;
+    ctx.logger.info(`${decoder.name} router detected`, { to: req.to });
 
-  const swap = decodeKumbayaSwap(req.data, chainId);
-  if (!swap) {
+    // Path 1: direct SwapRouter02-style calldata (single swap, single pool).
+    const directSwap = decode(req.data, chainId);
+    if (directSwap) {
+      const reasons: string[] = [];
+      let riskBps = 0;
+      if (directSwap.amountOutMinimum !== undefined && directSwap.amountOutMinimum === 0n) {
+        riskBps = Math.max(riskBps, 9000);
+        reasons.push('amountOutMinimum=0 — zero slippage protection; vulnerable to MEV sandwich attacks');
+      }
+      const poolRisk = await decoder.scorePool(directSwap.poolAddress, chainId, ctx);
+      reasons.push(...poolRisk.reasons.map(r => `pool ${directSwap.poolAddress.slice(0, 10)}…: ${r}`));
+      riskBps = Math.max(riskBps, poolRisk.riskBps);
+      return {
+        context: { name: decoder.name, recognized: 'swap', swap: serializeSwap(directSwap), poolRisk },
+        reasons, riskBps,
+      };
+    }
+
+    // Path 2: UniversalRouter command stream — multi-hop, multi-swap.
+    const v3Swaps = extractV3Swaps(req.data);
+    if (v3Swaps.length > 0) {
+      return await analyzeUniversalRouterSwaps(decoder, v3Swaps, chainId, ctx);
+    }
+
+    // Recognized router but neither decode worked (e.g., V2_SWAP, PERMIT-only, or new opcode).
     return {
-      context: { recognized: 'router' },
-      reasons: ['target is a Kumbaya router but calldata did not decode (multi-hop or unknown selector)'],
+      context: { name: decoder.name, recognized: 'router' },
+      reasons: [`target is a ${decoder.name} router but calldata did not decode (unknown command/selector or non-V3 swap)`],
       riskBps: 1000,
     };
   }
+  return null;
+}
 
+async function analyzeUniversalRouterSwaps(
+  decoder: SwapDecoder,
+  v3Swaps: DecodedV3Swap[],
+  chainId: number,
+  ctx: SkillContext,
+): Promise<{ context: ProtocolContext; reasons: string[]; riskBps: number }> {
   const reasons: string[] = [];
   let riskBps = 0;
+  let firstSwap: SerializedSwap | undefined;
+  let firstPoolRisk: PoolRisk | undefined;
+  let totalHops = 0;
 
-  // Slippage protection check — the highest-impact MEV signal we can read locally.
-  if (swap.amountOutMinimum !== undefined && swap.amountOutMinimum === 0n) {
-    riskBps = Math.max(riskBps, 9000);
-    reasons.push('amountOutMinimum=0 — zero slippage protection; vulnerable to MEV sandwich attacks');
-  }
-  if (swap.amountInMaximum !== undefined && swap.amountInMaximum > 0n && swap.amountOut !== undefined) {
-    // exactOutput: if amountInMaximum is unbounded vs amountOut, similar risk
-    // (rough heuristic — refine when QuoterV2 lookup is wired)
+  for (const swap of v3Swaps) {
+    totalHops += swap.hops.length;
+
+    // Slippage protection: amountLimit==0 on EXACT_IN means "any amountOut accepted".
+    if (swap.kind === 'V3_SWAP_EXACT_IN' && swap.amountLimit === 0n) {
+      riskBps = Math.max(riskBps, 9000);
+      reasons.push('amountOutMinimum=0 — zero slippage protection; vulnerable to MEV sandwich attacks');
+    }
+
+    for (const hop of swap.hops) {
+      const poolAddr = deriveProtocolPool(decoder.name, chainId, hop.tokenIn, hop.tokenOut, hop.fee);
+      if (!poolAddr) continue;
+      const poolRisk = await decoder.scorePool(poolAddr, chainId, ctx);
+      reasons.push(...poolRisk.reasons.map(r => `pool ${poolAddr.slice(0, 10)}…: ${r}`));
+      riskBps = Math.max(riskBps, poolRisk.riskBps);
+
+      if (!firstSwap) {
+        firstPoolRisk = poolRisk;
+        firstSwap = {
+          kind: swap.kind === 'V3_SWAP_EXACT_IN' ? 'exactInputSingle' : 'exactOutputSingle',
+          tokenIn: hop.tokenIn,
+          tokenOut: hop.tokenOut,
+          fee: hop.fee,
+          recipient: swap.recipient,
+          poolAddress: poolAddr,
+          ...(swap.kind === 'V3_SWAP_EXACT_IN'
+            ? { amountIn: swap.amountSpecified.toString(), amountOutMinimum: swap.amountLimit.toString() }
+            : { amountOut: swap.amountSpecified.toString(), amountInMaximum: swap.amountLimit.toString() }),
+        };
+      }
+    }
   }
 
-  // Score the destination pool — V3 oracle, liquidity, TVL drift.
-  const poolRisk = await KumbayaDecoder.scorePool(swap.poolAddress, chainId, ctx);
-  reasons.push(...poolRisk.reasons.map(r => `pool ${swap.poolAddress.slice(0, 10)}…: ${r}`));
-  riskBps = Math.max(riskBps, poolRisk.riskBps);
+  if (totalHops > 1 || v3Swaps.length > 1) {
+    reasons.push(`UniversalRouter command stream: ${v3Swaps.length} V3 swap(s), ${totalHops} hop(s) total — first hop shown in 'swap'`);
+  }
 
   return {
-    context: { recognized: 'swap', swap: serializeSwap(swap), poolRisk },
+    context: { name: decoder.name, recognized: 'swap', swap: firstSwap, poolRisk: firstPoolRisk },
     reasons,
     riskBps,
   };
 }
 
 async function check(req: PreflightRequest, ctx: SkillContext): Promise<PreflightResponse> {
-  const chainId = Number(ctx.env.MEGAETH_CHAIN_ID ?? 6343);
+  const chainId = Number(ctx.env.MEGAETH_CHAIN_ID ?? 4326);
   ctx.logger.info('preflight.check', { to: req.to, afterTx: req.afterTx, chainId });
 
   const reasons: string[] = [];
   let riskBps = 0;
 
   // 1. Protocol-specific deep analysis (calldata-aware) — always runs.
-  const kumbaya = await analyzeKumbaya(req, chainId, ctx);
-  if (kumbaya) {
-    reasons.push(...kumbaya.reasons);
-    riskBps = Math.max(riskBps, kumbaya.riskBps);
+  const protocol = await analyzeProtocol(req, chainId, ctx);
+  if (protocol) {
+    reasons.push(...protocol.reasons);
+    riskBps = Math.max(riskBps, protocol.riskBps);
   }
 
   // 2. Simulation — a revert is one signal among many, not a short-circuit.
@@ -128,8 +223,8 @@ async function check(req: PreflightRequest, ctx: SkillContext): Promise<Prefligh
   } catch (e) {
     const detail = (e as Error).message.split('\n')[0];
     // For an unrecognized target, a revert is a strong block signal.
-    // For a recognized protocol (Kumbaya), a revert is often missing approval/balance — softer.
-    if (kumbaya) {
+    // For a recognized protocol, a revert is often missing approval/balance — softer.
+    if (protocol) {
       reasons.push(`simulation reverted (likely missing approval or balance): ${detail}`);
       riskBps = Math.max(riskBps, 5000);
     } else {
@@ -146,7 +241,7 @@ async function check(req: PreflightRequest, ctx: SkillContext): Promise<Prefligh
       subjectId: req.to,
       metrics: {
         simulated,
-        kumbaya: kumbaya?.context ?? null,
+        protocol: protocol?.context ?? null,
         balanceDeltas: [],
         approvalsGranted: [],
         contractsCalled: [req.to],
@@ -165,15 +260,16 @@ async function check(req: PreflightRequest, ctx: SkillContext): Promise<Prefligh
     riskScoreBps: riskBps,
     ...(attestation !== undefined && { attestation }),
     ...(memoRoot !== undefined && { memoRoot }),
-    ...(kumbaya && { kumbaya: kumbaya.context }),
+    ...(protocol && { protocol: protocol.context }),
+    ...(protocol?.context.name === 'kumbaya' && { kumbaya: protocol.context }),
   };
 }
 
 const skill: Skill = {
   manifest: {
     name: 'mega-preflight',
-    description: 'Pre-flight risk co-pilot — simulates proposed user tx, decodes Kumbaya swaps, returns ALLOW/WARN/BLOCK with TEE-attested reasoning',
-    chain: { id: 6343, name: 'MegaETH-testnet', rpc: 'https://carrot.megaeth.com/rpc' },
+    description: 'Pre-flight risk co-pilot — decodes proposed user tx (Kumbaya, Prism), simulates, returns ALLOW/WARN/BLOCK with TEE-attested reasoning',
+    chain: { id: 4326, name: 'MegaETH-mainnet', rpc: 'https://mainnet.megaeth.com/rpc' },
     adapters: { compute: 'tee', storage: 'content-addressed', signer: 'env', chain: 'evm-realtime' },
     streaming: false,
     handlers: ['check'],

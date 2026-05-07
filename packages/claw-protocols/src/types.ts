@@ -7,9 +7,14 @@ export interface PoolRisk {
   reasons: string[];
   components: {
     tvlDriftBps: number | null;
+    /** Optional medium-window (~2h) TVL drift in bps — null if not measured. */
+    tvlDriftMediumBps: number | null;
     spreadBps: number | null;
     inactiveLiquidity: boolean | null;
     oracleHealthBps: number | null;
+    tokenPatternBps: number | null;
+    /** Stable-pair de-peg deviation in bps — null if pair is not stable/stable. */
+    dePegDeviationBps: number | null;
   };
 }
 

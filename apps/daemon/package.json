@@ -9,9 +9,11 @@
   "dependencies": {
     "@claw/core": "workspace:*",
     "@claw/adapters": "workspace:*",
+    "@claw/protocols": "workspace:*",
     "@claw/skill-0g-uniswap-hook": "workspace:*",
     "@claw/skill-mega-vault-exiter": "workspace:*",
     "@claw/skill-mega-preflight": "workspace:*",
-    "@claw/skill-mega-aggregator": "workspace:*"
+    "@claw/skill-mega-aggregator": "workspace:*",
+    "viem": "^2.21.0"
   }
 }

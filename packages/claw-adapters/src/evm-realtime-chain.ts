@@ -41,6 +41,11 @@ export class EvmRealtimeChain implements ChainAdapter {
     return this.http.getBlockNumber();
   }
 
+  async getCode(address: string): Promise<string | null> {
+    const code = await this.http.getCode({ address: address as Hex });
+    return code && code !== '0x' ? code : null;
+  }
+
   async simulateAfter(req: CallRequest & { afterTx: string }): Promise<string> {
     // MegaETH-specific: gates simulation behind a prior tx confirming, via nonce.
     const r = await this.http.request({

@@ -74,6 +74,8 @@ export interface ChainAdapter {
   call(req: CallRequest): Promise<string>;
   readContract<T = unknown>(req: ReadContractRequest): Promise<T>;
   getBlockNumber(): Promise<bigint>;
+  /** Returns deployed runtime bytecode (0x-prefixed) or null if no code at address. */
+  getCode(address: string): Promise<string | null>;
   simulateAfter?(req: CallRequest & { afterTx: string }): Promise<string>;
   subscribe?(filter: SubscribeFilter, handler: (event: ChainEvent) => void): Promise<() => void>;
 }

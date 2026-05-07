@@ -13,6 +13,10 @@ export class MockChain implements ChainAdapter {
     return 0n;
   }
 
+  async getCode(_address: string): Promise<string | null> {
+    return null;
+  }
+
   async simulateAfter(_req: CallRequest & { afterTx: string }): Promise<string> {
     return '0x';
   }

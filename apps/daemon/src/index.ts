@@ -12,6 +12,7 @@ registry.register(megaPreflight);
 registry.register(megaAggregator);
 
 export { buildContext };
+export { auditProtocol, formatAuditText, type ProtocolAudit, type AuditOptions } from './audit.ts';
 
 if (import.meta.main) {
   console.log('riskclaw-daemon — skills loaded:');

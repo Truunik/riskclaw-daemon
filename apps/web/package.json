@@ -1,0 +1,14 @@
+{
+  "name": "@claw/web",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./src/server.ts",
+  "scripts": {
+    "start": "bun run ./src/server.ts"
+  },
+  "dependencies": {
+    "@claw/core": "workspace:*",
+    "@claw/daemon": "workspace:*",
+    "@claw/protocols": "workspace:*"
+  }
+}
